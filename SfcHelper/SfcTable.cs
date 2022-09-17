@@ -85,6 +85,7 @@ namespace SfcHelper
             {
                 throw new Exception($"Line type exceeds the maximum number of definitions.");
             }
+
             mLineTypeMap.Add(mNextUserLineTypeId++, new SxfLineType(name, a2.ToArray()));
         }
 

@@ -35,7 +35,7 @@ namespace SfcHelper
                         break;
                     case string s:
                         {
-                            sa.Add($"\'{s}\'");
+                            sa.Add(@$"\'{s}\'");
                         }
                         break;
                     default:
