@@ -1,32 +1,13 @@
-﻿using Microsoft.Win32.SafeHandles;
-using System;
-using System.Buffers.Text;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Linq;
-using System.Numerics;
-using System.Reflection.Emit;
-using System.Reflection.Metadata;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Security.Permissions;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml.Linq;
-using static System.Formats.Asn1.AsnWriter;
-using static System.Net.Mime.MediaTypeNames;
-using static System.Runtime.CompilerServices.RuntimeHelpers;
+﻿using System.Xml.Linq;
 
 namespace SfcHelper
 {
-
-
-    //------------------------------------------------
-    //	用紙
-    //------------------------------------------------
+    /// <summary>
+    /// 用紙
+    /// </summary>
     public class SxfSheet
     {
-        public SxfSheet(string name, int paperType, int orient, int width, int height)
+        internal SxfSheet(string name, int paperType, int orient, int width, int height)
         {
             Name = name;
             PaperType = paperType;
@@ -34,28 +15,37 @@ namespace SfcHelper
             Width = width;
             Height = height;
         }
+
+        //public void SetParameters(string name, int paperType, int orient, int width, int height)
+        //{
+        //    Name = name;
+        //    PaperType = paperType;
+        //    Orient = orient;
+        //    Width = width;
+        //    Height = height;
+        //}
+
+
         /// <summary>
         /// 図面名
         /// </summary>
-        public string Name { get; }
+        public string Name { get; private set; }
         /// <summary>
-        /// 用紙サイズ種別
+        /// 用紙サイズ種別(0:A0, 1:A1, 2:A2, 3:A3, 4:A4, 9:FREE)
         /// </summary>
-        public int PaperType { get; }
+        public int PaperType { get; private set; }
         /// <summary>
         /// 縦／横区分　0:縦 1:横
         /// </summary>
-        public int Orient { get; }
+        public int Orient { get; private set; }
         /// <summary>
         /// 自由用紙横長
         /// </summary>
-        public int Width { get; }
+        public int Width { get; private set; }
         /// <summary>
         /// 自由用紙縦長
         /// </summary>
-        public int Height { get; }
-
-        public List<SxfShape> Shapes { get; } = new();
+        public int Height { get; private set; }
 
         /// <inheritdoc/>
         public override string ToString()
@@ -64,23 +54,101 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	複合図形定義
-    //------------------------------------------------
+    /// <summary>
+    /// 既定義シンボル
+    /// </summary>
+    public class SxfExternallyDefinedSymbol
+    {
+        /// <summary>
+        /// 既定義シンボルを返す。シンボル名は、
+        /// "sxf_hatch_style_7_symbol"及び"sxf_hatch_style_8_symbol"
+        /// それ以外は空の配列を返す。
+        /// </summary>
+        /// <param name="sxfHatchPatternName">既定義シンボル名</param>
+        /// <param name="ratioX">倍率X</param>
+        /// <param name="ratioY">倍率Y</param>
+        /// <param name="angleDeg">回転角（度）</param>
+        /// <returns>線分の座標の配列。各線分は(X1,Y1)-(X2,Y2)で構成される。つまり配列サイズは4の倍数となります。</returns>
+        public static double[] GetExternallyDefinedSymbol(
+            string sxfHatchPatternName, double ratioX, double ratioY, double angleDeg
+        )
+        {
+            double[] ret = Array.Empty<double>();
+            switch (sxfHatchPatternName)
+            {
+                case "sxf_hatch_style_7_symbol":
+                    //DX=200 DY=200
+                    {
+                        ret = new double[]
+                        {
+                            0.0, 0.0, 200.0, 0.0,
+                            200.0, 0.0, 200.0, 100.0,
+                            200.0, 100.0, 0.0, 100.0,
+                            100.0, 100.0, 100.0, 200.0,
+                        };
+                    }
+                    break;
+                case "sxf_hatch_style_8_symbol":
+                    //DX=sqrt(2)*200 DY=sqrt(2)*200
+                    {
+                        ret = new double[]
+                        {
+                        0.0, 0.0, 100.0, 0.0,
+                        100.0, -100.0, 100.0, 100.0,
+                        100.0, 100.0, 300.0, 100,
+                        300.0, 100, 300.0, 0.0,
+                        300.0, 0.0, 400, 0.0,
+                        200.0, 100.0, 200, -200.0,
+                        200.0, -100.0, 300, -100.0,
+                        };
+                        var a45 = Helper.DegToRad(45.0);
+                        for (var i = 0; i < ret.Length; i += 2)
+                        {
+                            (ret[i], ret[i + 1]) = Helper.RotatePoint(ret[i], ret[i + 1], a45);
+                        }
+                    }
+                    break;
+            }
+            var a = Helper.DegToRad(angleDeg);
+            for (var i = 0; i < ret.Length; i += 2)
+            {
+                (ret[i], ret[i + 1]) = Helper.ScalePoint(ret[i], ret[i + 1], ratioX, ratioY);
+                (ret[i], ret[i + 1]) = Helper.RotatePoint(ret[i], ret[i + 1], a);
+            }
+            return ret;
+        }
+    }
+
+
+    /// <summary>
+    /// 複合図形定義
+    /// </summary>
     public class SxfSfigOrg
     {
         /// <summary>複合図形名</summary>
         public string Name;
 
-        /// <summary>複合図形種別フラグ</summary>
+        /// <summary>
+        /// 複合図形種別フラグ
+        /// (1:部分図（数学座標系）, 2:部分図（測地座標系）,3:作図グループ, 4:作図部品)
+        /// </summary>
         public int Flag;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="name">複合図形名</param>
+        /// <param name="flag">
+        /// 複合図形種別フラグ(1:部分図（数学座標系）, 2:部分図（測地座標系）,3:作図グループ, 4:作図部品)
+        /// </param>
         public SxfSfigOrg(string name, int flag)
         {
             Name = name;
             Flag = flag;
         }
-
+        /// <summary>
+        /// 図形のリスト
+        /// </summary>
         public List<SxfShape> Shapes { get; } = new();
 
         /// <inheritdoc/>
@@ -90,11 +158,9 @@ namespace SfcHelper
         }
     }
 
-
-
-    //------------------------------------------------
-    //	レイヤ
-    //------------------------------------------------
+    /// <summary>
+    /// レイヤ
+    /// </summary>
     public class SxfLayer
     {
         /// <summary>
@@ -105,11 +171,15 @@ namespace SfcHelper
         /// 表示/非表示フラグ 0:非表示　1:表示
         /// </summary>
         public int Flag;
-
-        public SxfLayer(string name, int lflag)
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="name">レイヤ名</param>
+        /// <param name="flag">表示/非表示フラグ 0:非表示　1:表示</param>
+        public SxfLayer(string name, int flag)
         {
             Name = name;
-            Flag = lflag;
+            Flag = flag;
         }
 
         /// <inheritdoc/>
@@ -120,24 +190,31 @@ namespace SfcHelper
         }
     }
 
+    /// <summary>
+    /// 線種（ユーザ定義）
+    /// </summary>
     public class SxfLineType
     {
+        /// <summary>
+        /// 線種名
+        /// </summary>
+        public readonly string Name;
+
+        /// <summary>
+        /// ピッチ線分の長さ＋空白長さの繰り返し
+        /// </summary>
+        public readonly double[] Pitch;
+
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="name">線種名</param>
+        /// <param name="pitch">ピッチ線分の長さ＋空白長さの繰り返し</param>
         public SxfLineType(string name, double[] pitch)
         {
             Name = name;
             Pitch = pitch;
         }
-
-        /// <summary>
-        /// 線種名
-        /// </summary>
-        public string Name { get; }
-
-        /// <summary>
-        /// ピッチ線分の長さ＋空白長さの繰り返し
-        /// </summary>
-        public double[] Pitch { get; }
-
         /// <inheritdoc/>
         public override string ToString()
         {
@@ -147,12 +224,34 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	既定義線種
-    //------------------------------------------------
+    /// <summary>
+    /// 既定義線種
+    /// </summary>
     public class SxfPreDefinedLineType : SxfLineType
     {
-        public SxfPreDefinedLineType(string name, double[] pitch) : base(name, pitch)
+        /// <summary>
+        /// 既定義線種の配列
+        /// </summary>
+        public static SxfPreDefinedLineType[] PreDefLineTypes = new SxfPreDefinedLineType[]
+        {
+            new SxfPreDefinedLineType("continuous", new double[]{ }),//1
+            new SxfPreDefinedLineType("dashed", new double[]{6, 1.5}),//2
+            new SxfPreDefinedLineType("dashed spaced", new double[]{6, 6}),//3
+            new SxfPreDefinedLineType("long dashed dotted", new double[]{12, 1.5, 0.25, 1.5}),//4
+            new SxfPreDefinedLineType("long dashed double-dotted", new double[]{12,1.5,0.25,1.5,0.25,1.5}),//5
+            new SxfPreDefinedLineType("long dashed triplicate-dotted", new double[]{12,3,0.25,1.5,0.25,1.5,0.25,1.5}),//6
+            new SxfPreDefinedLineType("dotted", new double[]{0.25, 1.5}),//7
+            new SxfPreDefinedLineType("chain", new double[]{12,1.5,3.5,1.5}),//8
+            new SxfPreDefinedLineType("chain double dash", new double[]{12,1.5,3.5,1.5,3.5,1.5}),//9
+            new SxfPreDefinedLineType("dashed dotted", new double[]{6,1.5,0.25,1.5}),//10
+            new SxfPreDefinedLineType("double-dashed dotted", new double[]{6,1.5,6,1.5,0.25,1.5}),//11
+            new SxfPreDefinedLineType("dashed double-dotted", new double[]{6,1.5,0.25,1.5,0.25,1.5}),//12
+            new SxfPreDefinedLineType("double-dashed double-dotted", new double[]{6,1.5,6,1.5,0.25,1.5,0.25,1.5}),//13
+            new SxfPreDefinedLineType("dashed triplicate-dotted", new double[]{6,1.5,0.25,1.5,0.25,1.5,0.25,1.5}),//14
+            new SxfPreDefinedLineType("double-dashed triplicate-dotted", new double[]{6,1.5,6,1.5,0.25,1.5,0.25,1.5,0.25,1.5}),//15
+        };
+
+        private SxfPreDefinedLineType(string name, double[] pitch) : base(name, pitch)
         {
         }
 
@@ -163,18 +262,28 @@ namespace SfcHelper
         }
     }
 
-
-
+    /// <summary>
+    /// 色
+    /// </summary>
     public class SxfColor
     {
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="r">赤</param>
+        /// <param name="g">緑</param>
+        /// <param name="b">青</param>
         public SxfColor(int r, int g, int b)
         {
             Red = r;
             Green = g;
             Blue = b;
         }
+        /// <summary>赤</summary>
         public int Red { get; }
+        /// <summary>緑</summary>
         public int Green { get; }
+        /// <summary>青</summary>
         public int Blue { get; }
 
         /// <inheritdoc/>
@@ -184,17 +293,27 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	既定義色
-    //------------------------------------------------
+    /// <summary>
+    /// 既定義色
+    /// </summary>
     public class SxfPreDefinedColor : SxfColor
     {
-        /// <summary>
-        /// 色名
-        /// </summary>
-        public string Name { get; }
+        /// <summary>色名</summary>
+        public string Name;
 
-        public SxfPreDefinedColor(string name, int r, int g, int b) : base(r, g, b)
+        /// <summary>
+        /// 既定義色の配列
+        /// </summary>
+        public static SxfPreDefinedColor[] PreDefColors = new SxfPreDefinedColor[]
+        {
+            new("black", 0,0,0),new("red", 255,0,0),new("green", 0,255,0),new("blue", 0,0,255),
+            new("yellow", 255,255,0),new("magenta", 255,0,255),new("cyan", 0,255,255),new("white", 255,255,255),
+            new("deeppink", 192,0,128),new("brown", 192,128,64),new("orange", 255,128,0),new("lightgreen", 128,192,128),
+            new("lightblue", 0,128,255),new("lavender", 128,64,255),new("lightgray", 192,192,192),new("darkgray", 128,128,128),
+        };
+
+
+        private SxfPreDefinedColor(string name, int r, int g, int b) : base(r, g, b)
         {
             Name = name;
         }
@@ -206,29 +325,17 @@ namespace SfcHelper
         }
     }
 
-    ////------------------------------------------------
-    ////	ユーザ定義色
-    ////------------------------------------------------
-    //public class SxfUserdefinedColour
-    //{
-    //    /* Ｒ値 */
-    //    public int red;
-    //    /* Ｇ値 */
-    //    public int green;
-    //    /* Ｂ値 */
-    //    public int blue;
-    //}
-
-    //------------------------------------------------
-    //	線幅
-    //------------------------------------------------
+    /// <summary>
+    /// 線幅
+    /// </summary>
     public class SxfLineWidth
     {
-        /// <summary>
-        /// 線幅
-        /// </summary>
+        /// <summary>線幅</summary>
         public double Width { get; }
-
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="width">線幅</param>
         public SxfLineWidth(double width)
         {
             Width = width;
@@ -239,19 +346,33 @@ namespace SfcHelper
         {
             return $@"width_feature('{Width}')";
         }
+
+        /// <summary>
+        /// 既定義線幅
+        /// </summary>
+        public static double[] PreDefinedLineWidth = new double[]
+        {
+            0.13,0.18,0.25,0.35,0.5,0.7,1.0,1.4,2.0
+        };
     }
 
-    //------------------------------------------------
-    //	文字フォント
-    //------------------------------------------------
+    /// <summary>
+    /// 文字フォント
+    /// </summary>
     public class SxfTextFont
     {
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="name">フォント名</param>
         public SxfTextFont(string name)
         {
             Name = name;
         }
 
-        /* 文字フォント名 */
+        /// <summary>
+        /// 文字フォント名
+        /// </summary>
         public string Name { get; }
 
         /// <inheritdoc/>
@@ -262,9 +383,9 @@ namespace SfcHelper
 
     }
 
-    //------------------------------------------------
-    //	図面表題欄
-    //------------------------------------------------
+    /// <summary>
+    /// 図面表題欄
+    /// </summary>
     public class SxfAttribute
     {
         /* 事業名 */
@@ -294,11 +415,17 @@ namespace SfcHelper
     }
 
 
+    /// <summary>
+    /// 図形の基本クラス
+    /// </summary>
     public class SxfShape
     {
         /// <summary> レイヤコード </summary>
         public int Layer;
-
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
         public SxfShape(int layer)
         {
             Layer = layer;
@@ -354,9 +481,9 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	線分
-    //------------------------------------------------
+    /// <summary>
+    /// 線分
+    /// </summary>
     public class SxfLineShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -367,7 +494,6 @@ namespace SfcHelper
         public int LineWidth;
         /// <summary>始点Ｘ座標</summary>
         public double StartX;
-        /* 始点Ｙ座標 */
         /// <summary>始点Ｙ座標</summary>
         public double StartY;
         /// <summary>終点Ｘ座標</summary>
@@ -375,14 +501,25 @@ namespace SfcHelper
         /// <summary>終点Ｙ座標</summary>
         public double EndY;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="start_x">始点Ｘ座標</param>
+        /// <param name="start_y">始点Ｙ座標</param>
+        /// <param name="end_x">終点Ｘ座標</param>
+        /// <param name="end_y">終点Ｙ座標</param>
         public SxfLineShape(
-            int layer, int color, int type, int line_width,
+            int layer, int color, int lineType, int lineWidth,
             double start_x, double start_y, double end_x, double end_y
         ) : base(layer)
         {
             this.Color = color;
-            this.LineType = type;
-            this.LineWidth = line_width;
+            this.LineType = lineType;
+            this.LineWidth = lineWidth;
             this.StartX = start_x;
             this.StartY = start_y;
             this.EndX = end_x;
@@ -397,9 +534,9 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	折線
-    //------------------------------------------------
+    /// <summary>
+    /// 折線
+    /// </summary>
     public class SxfPolylineShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -450,9 +587,9 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	円
-    //------------------------------------------------
+    /// <summary>
+    /// 円
+    /// </summary>
     public class SxfCircleShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -467,7 +604,16 @@ namespace SfcHelper
         public double CenterY;
         /// <summary>半径</summary>
         public double Radius;
-
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="centerX">中心X座標</param>
+        /// <param name="centerY">中心Y座標</param>
+        /// <param name="radius">半径</param>
         public SxfCircleShape(
             int layer, int color, int lineType, int lineWidth, double centerX, double centerY, double radius
         ) : base(layer)
@@ -486,10 +632,10 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	円弧
-    //------------------------------------------------
-    class SxfArcShape : SxfShape
+    /// <summary>
+    /// 円弧
+    /// </summary>
+    public class SxfArcShape : SxfShape
     {
         /// <summary>色コード </summary>
         public int Color;
@@ -503,13 +649,26 @@ namespace SfcHelper
         public double CenterY;
         /// <summary>半径</summary>
         public double Radius;
-        /// <summary>向きフラグ</summary>
+        /// <summary>向きフラグ（0:反時計廻り,1: 時計廻り）</summary>
         public int Direction;
         /// <summary>始角</summary>
         public double StartAngle;
         /// <summary>終角</summary>
         public double EndAngle;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="centerX">中心X座標</param>
+        /// <param name="centerY">中心Y座標</param>
+        /// <param name="radius">半径</param>
+        /// <param name="direction">向きフラグ（0:反時計廻り,1: 時計廻り）</param>
+        /// <param name="startAngle">始角</param>
+        /// <param name="endAngle">終角</param>
         public SxfArcShape(
             int layer, int color, int lineType, int lineWidth,
             double centerX, double centerY, double radius, int direction, double startAngle, double endAngle
@@ -535,10 +694,10 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	楕円
-    //------------------------------------------------
-    class SxfEllipseShape : SxfShape
+    /// <summary>
+    /// 楕円
+    /// </summary>
+    public class SxfEllipseShape : SxfShape
     {
         /// <summary>色コード </summary>
         public int Color;
@@ -557,6 +716,18 @@ namespace SfcHelper
         /// <summary>回転角</summary>
         public double RotateAngle;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="centerX">中心X座標</param>
+        /// <param name="centerY">中心Y座標</param>
+        /// <param name="radiusX">X方向半径</param>
+        /// <param name="radiusY">Y方向半径</param>
+        /// <param name="rotateAngle">回転角</param>
         public SxfEllipseShape(
             int layer, int color, int lineType, int lineWidth,
             double centerX, double centerY, double radiusX, double radiusY, double rotateAngle
@@ -581,10 +752,10 @@ namespace SfcHelper
 
     }
 
-    //------------------------------------------------
-    //	だ円弧
-    //------------------------------------------------
-    class SxfEllipseArcShape : SxfShape
+    /// <summary>
+    /// 楕円弧
+    /// </summary>
+    public class SxfEllipseArcShape : SxfShape
     {
         /// <summary>色コード </summary>
         public int Color;
@@ -600,7 +771,7 @@ namespace SfcHelper
         public double RadiusX;
         /// <summary>Y方向半径</summary>
         public double RadiusY;
-        /// <summary>向きフラグ</summary>
+        /// <summary>向きフラグ（0:反時計廻り,1: 時計廻り）</summary>
         public int Direction;
         /// <summary>回転角</summary>
         public double RotateAngle;
@@ -609,6 +780,21 @@ namespace SfcHelper
         /// <summary>終角</summary>
         public double EndAngle;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="centerX">中心X座標</param>
+        /// <param name="centerY">中心Y座標</param>
+        /// <param name="radiusX">X方向半径</param>
+        /// <param name="radiusY">Y方向半径</param>
+        /// <param name="direction">向きフラグ（0:反時計廻り,1: 時計廻り）</param>
+        /// <param name="rotateAngle">回転角</param>
+        /// <param name="startAngle">始角</param>
+        /// <param name="endAngle">終角</param>
         public SxfEllipseArcShape(
             int layer, int color, int lineType, int lineWidth,
             double centerX, double centerY, double radiusX, double radiusY,
@@ -638,38 +824,76 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	文字要素
-    //------------------------------------------------
-    class SxfTextShape : SxfShape
+    /// <summary>
+    /// 文字要素
+    /// </summary>
+    public class SxfTextShape : SxfShape
     {
-        /* レイヤコード */
-        public int laye;
-        /* 色コード */
+        /// <summary>
+        /// 色コード
+        /// </summary>
         public int Color;
-        /* 文字フォントコード */
+        /// <summary>
+        /// 文字フォントコード
+        /// </summary>
         public int Font;
-        /* 文字列 */
+        /// <summary>
+        /// 文字列
+        /// </summary>
         public string Str;
-        /* 文字配置基点Ｘ座標 */
+        /// <summary>
+        /// 文字配置基点Ｘ座標
+        /// </summary>
         public double TextX;
-        /* 文字配置基点Ｙ座標 */
+        /// <summary>
+        /// 文字配置基点Ｙ座標
+        /// </summary>
         public double TextY;
-        /* 文字範囲高 */
+        /// <summary>
+        /// 文字範囲高
+        /// </summary>
         public double Height;
-        /* 文字範囲幅 */
+        /// <summary>
+        /// 文字範囲幅
+        /// </summary>
         public double Width;
-        /* 文字間隔 */
+        /// <summary>
+        /// 文字間隔
+        /// </summary>
         public double Spc;
-        /* 文字回転角 */
+        /// <summary>
+        /// 文字列回転角（0≦度＜３６０）
+        /// </summary>
         public double Angle;
-        /* スラント角 */
+        /// <summary>
+        /// スラント角度（－８５≦度≦８５）
+        /// </summary>
         public double Slant;
-        /* 文字配置基点 */
+        /// <summary>
+        /// 文字配置基点（1:左下，2:中下，3:右下，4:左中，5:中中，6:右中，7:左上，8:中上，9:右上）
+        /// </summary>
         public int BPnt;
-        /* 文字書き出し方向 */
+        /// <summary>
+        /// 文字書出し方向（1:横書き, 2:縦書き）
+        /// </summary>
         public int Direct;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="font">文字フォントコード</param>
+        /// <param name="str">文字列</param>
+        /// <param name="textX">文字配置基点Ｘ座標</param>
+        /// <param name="textY">文字配置基点Ｙ座標</param>
+        /// <param name="height">文字範囲高</param>
+        /// <param name="width">文字範囲幅</param>
+        /// <param name="spc">文字間隔</param>
+        /// <param name="angle">文字列回転角（0≦度＜３６０）</param>
+        /// <param name="slant">スラント角度（－８５≦度≦８５）</param>
+        /// <param name="bPnt">文字配置基点（1:左下，2:中下，3:右下，4:左中，5:中中，6:右中，7:左上，8:中上，9:右上）</param>
+        /// <param name="direct">文字書出し方向（1:横書き, 2:縦書き）</param>
         public SxfTextShape(
             int layer, int color, int font, string str, double textX, double textY,
             double height, double width, double spc, double angle, double slant, int bPnt, int direct
@@ -760,9 +984,9 @@ namespace SfcHelper
     };
 
 
-    //------------------------------------------------
-    //	クロソイド曲線
-    //------------------------------------------------
+    /// <summary>
+    /// クロソイド曲線
+    /// </summary>
     public class SxfClothoidShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -786,6 +1010,20 @@ namespace SfcHelper
         /// <summary>終了曲線長</summary>
         public double EndLength;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="baseX">配置基点Ｘ座標</param>
+        /// <param name="baseY">配置基点Ｙ座標</param>
+        /// <param name="parameter">クロソイドパラメータ</param>
+        /// <param name="direction">向きフラグ</param>
+        /// <param name="angle">回転角</param>
+        /// <param name="startLength">開始曲線長</param>
+        /// <param name="endLength">終了曲線長</param>
         public SxfClothoidShape(
             int layer, int color, int lineType, int lineWidth, double baseX, double baseY,
             double parameter, int direction, double angle, double startLength, double endLength
@@ -812,9 +1050,9 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //	複合図形配置
-    //------------------------------------------------
+    /// <summary>
+    /// 複合図形配置
+    /// </summary>
     public class SxfSfiglocShape : SxfShape
     {
         /// <summary> 複合図形名 </summary>
@@ -830,6 +1068,16 @@ namespace SfcHelper
         /// <summary> Y方向尺度 </summary>
         public double RatioY;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="name">複合図形名</param>
+        /// <param name="x">配置位置X座標</param>
+        /// <param name="y">配置位置Y座標</param>
+        /// <param name="angle">回転角</param>
+        /// <param name="ratio_x">X方向尺度</param>
+        /// <param name="ratio_y">Y方向尺度</param>
         public SxfSfiglocShape(
             int layer, string name, double x, double y, double angle, double ratio_x, double ratio_y
         ) : base(layer)
@@ -847,14 +1095,11 @@ namespace SfcHelper
         {
             return Helper.MakeFeatureString("sfig_locate_feature", Layer, Name, X, Y, Angle, RatioX, RatioY);
         }
-
-
     }
 
-
-    //------------------------------------------------
-    //	既定義シンボル
-    //------------------------------------------------
+    /// <summary>
+    /// 既定義シンボル
+    /// </summary>
     public class SxfExternallyDefinedSymbolShape : SxfShape
     {
         /// <summary>色コードフラグ </summary>
@@ -872,6 +1117,17 @@ namespace SfcHelper
         /// <summary>倍率</summary>
         public double Scale;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="colorFlag">色コードフラグ</param>
+        /// <param name="color">色コード</param>
+        /// <param name="name">シンボル名</param>
+        /// <param name="x">配置位置X座標</param>
+        /// <param name="y">配置位置Y座標</param>
+        /// <param name="angle">回転角</param>
+        /// <param name="scale">倍率</param>
         public SxfExternallyDefinedSymbolShape(
             int layer, int colorFlag, int color, string name,
             double x, double y, double angle, double scale
@@ -893,9 +1149,9 @@ namespace SfcHelper
 
     }
 
-    //------------------------------------------------
-    //	直線寸法
-    //------------------------------------------------
+    /// <summary>
+    /// 直線寸法
+    /// </summary>
     public class SxfLinearDimShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -1058,9 +1314,9 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //  弧長寸法
-    //------------------------------------------------
+    /// <summary>
+    /// 弧長寸法
+    /// </summary>
     public class SxfCurveDimShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -1226,12 +1482,11 @@ namespace SfcHelper
         }
     }
 
-    //------------------------------------------------
-    //  角度寸法
-    //------------------------------------------------
+    /// <summary>
+    /// 角度寸法
+    /// </summary>
     public class SxfAngularDimShape : SxfShape
     {
-        public int layer;              /* レイヤコード */
         /// <summary>色コード </summary>
         public int Color;
         /// <summary>線種コード</summary>
@@ -1336,8 +1591,8 @@ namespace SfcHelper
             int flag2, double ho1X0, double ho1Y0, double ho1X1, double ho1Y1, double ho1X2, double ho1Y2,
             int flag3, double ho2X0, double ho2Y0, double ho2X1, double ho2Y1, double ho2X2, double ho2Y2,
             int arr1Code1, int arr1Code2, double arr1X, double arr1Y, double arr1R,
-            int arr2Code1, int arr2Code2, double arr2X, double arr2Y, double arr2R, int flag4,
-            int font, string str, double textX, double textY, double height, double width,
+            int arr2Code1, int arr2Code2, double arr2X, double arr2Y, double arr2R, 
+            int flag4, int font, string str, double textX, double textY, double height, double width,
             double spc, double angle, double slant, int bPnt, int direct
         ) : base(layer)
         {
@@ -1400,9 +1655,9 @@ namespace SfcHelper
 
     }
 
-    //------------------------------------------------
-    //  半径寸法
-    //------------------------------------------------
+    /// <summary>
+    /// 半径寸法
+    /// </summary>
     public class SxfRadiusDimShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -1506,9 +1761,9 @@ namespace SfcHelper
 
     }
 
-    //------------------------------------------------
-    //  直径寸法
-    //------------------------------------------------
+    /// <summary>
+    /// 直径寸法
+    /// </summary>
     public class SxfDiameterDimShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -1627,10 +1882,9 @@ namespace SfcHelper
         }
     }
 
-
-    //------------------------------------------------
-    //  引出し線
-    //------------------------------------------------
+    /// <summary>
+    /// 引出し線
+    /// </summary>
     public class SxfLabelShape : SxfShape
     {
         /// <summary>色コード </summary>
@@ -1728,10 +1982,10 @@ namespace SfcHelper
         }
     }
 
-//------------------------------------------------
-//  バルーン
-//------------------------------------------------
-public class SxfBalloonShape : SxfShape
+    /// <summary>
+    /// バルーン
+    /// </summary>
+    public class SxfBalloonShape : SxfShape
     {
         /// <summary>色コード </summary>
         public int Color;
@@ -1838,19 +2092,24 @@ public class SxfBalloonShape : SxfShape
         }
     }
 
-    //------------------------------------------------
-    //  ハッチング(既定義(外部定義)
-    //------------------------------------------------
-    class SxfExternallyDefinedHatchShape : SxfShape
+    /// <summary>
+    /// ハッチング(既定義(外部定義)
+    /// </summary>
+    public class SxfExternallyDefinedHatchShape : SxfShape
     {
         /// <summary>ハッチング名</summary>
         public string Name;
         /// <summary>外形の複合曲線のフィーチャコード</summary>
         public int OutId;
-        //        int number;                     /* 中抜きの閉領域数 */
         /// <summary>中抜きの複合曲線のフィーチャコード</summary>
         public readonly List<int> InId = new();
-
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="name">ハッチング名</param>
+        /// <param name="outId">外形の複合曲線のフィーチャコード</param>
+        /// <param name="inId">中抜きの複合曲線のフィーチャコード</param>
         public SxfExternallyDefinedHatchShape(int layer, string name, int outId, IReadOnlyList<int> inId):base(layer)
         {
             Name = name;
@@ -1865,19 +2124,26 @@ public class SxfBalloonShape : SxfShape
         }
     }
 
-    //------------------------------------------------
-    //  ハッチング(塗り)
-    //------------------------------------------------
-    class SxfFillAreaStyleColorShape : SxfShape
+
+    /// <summary>
+    /// ハッチング(塗り)
+    /// </summary>
+    public class SxfFillAreaStyleColorShape : SxfShape
     {
         /// <summary>色コード </summary>
         public int Color;
         /// <summary>外形の複合曲線のフィーチャコード</summary>
         public int OutId;
-        //        int number;                     /* 中抜きの閉領域数 */
         /// <summary>中抜きの複合曲線のフィーチャコード</summary>
         public readonly List<int> InId = new();
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="color">色コード</param>
+        /// <param name="outId">外形の複合曲線のフィーチャコード</param>
+        /// <param name="inId">中抜きの複合曲線のフィーチャコード</param>
         public SxfFillAreaStyleColorShape(int layer, int color, int outId, IReadOnlyList<int> inId) : base(layer)
         {
             Color = color;
@@ -1892,7 +2158,7 @@ public class SxfBalloonShape : SxfShape
         }
     }
 
-    class HatchingPattern
+    public class HatchingPattern
     {
         /// <summary>ハッチング線の色コード</summary>
         public int Color;
@@ -1909,6 +2175,16 @@ public class SxfBalloonShape : SxfShape
         /// <summary>ハッチング線の角度</summary>
         public double Angle;
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="color">ハッチング線の色コード</param>
+        /// <param name="lineType">ハッチング線の線種コード</param>
+        /// <param name="lineWidth">ハッチング線の線幅コード</param>
+        /// <param name="startX">ハッチング線のパターン開始点X座標</param>
+        /// <param name="startY">ハッチング線のパターン開始点Y座標</param>
+        /// <param name="spacing">ハッチング間隔</param>
+        /// <param name="angle">ハッチング線の角度</param>
         public HatchingPattern(int color, int lineType, int lineWidth, double startX, double startY, double spacing, double angle)
         {
             Color = color;
@@ -1926,17 +2202,26 @@ public class SxfBalloonShape : SxfShape
         }
     }
 
-    //------------------------------------------------
-    //  ハッチング(ユーザ定義)
-    //------------------------------------------------
-    class SxfFillAreaStyleHatchingShape : SxfShape
+    /// <summary>
+    /// ハッチング(ユーザ定義)
+    /// </summary>
+    public class SxfFillAreaStyleHatchingShape : SxfShape
     {
-        /// <summary>ハッチング線のパターン数</summary>
+        /// <summary>ハッチング線のパターンのリスト</summary>
         public readonly List<HatchingPattern> HatchingPatternList = new();
         /// <summary>外形の複合曲線のフィーチャコード</summary>
         public int OutId;
+        /// <summary>中抜きの複合曲線のフィーチャコード</summary>
         public readonly List<int> InId = new();
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="hatchingPatternList">ハッチング線のパターンのリスト</param>
+        /// <param name="outId">外形の複合曲線のフィーチャコード</param>
+        /// <param name="inId">中抜きの複合曲線のフィーチャコード</param>
+        /// <exception cref="Exception"></exception>
         public SxfFillAreaStyleHatchingShape(
             int layer, IReadOnlyList<HatchingPattern> hatchingPatternList, int outId, List<int> inId):base(layer)
         {
@@ -1955,16 +2240,15 @@ public class SxfBalloonShape : SxfShape
             var s = string.Join(',', b);
             var a = string.Join(",", InId);
 
-            return $"fill_area_style_hatching_feature('{Layer}','{HatchingPatternList.Count}',{s},'{OutId}','({a})')";
+            return $"fill_area_style_hatching_feature('{Layer}','{HatchingPatternList.Count}',{s},'{OutId}','{InId.Count}','({a})')";
         }
     }
 
-    //------------------------------------------------
-    //  ハッチング(パターン)
-    //------------------------------------------------
-    class SxfFillAreaStyleTilesShape : SxfShape
+    /// <summary>
+    /// ハッチング(パターン)
+    /// </summary>
+    public class SxfFillAreaStyleTilesShape : SxfShape
     {
-        int layer;                              /* レイヤコード */
         /// <summary>既定義シンボル名</summary>
         public string Name;
         /// <summary>ハッチパターンの色コード</summary>
@@ -1974,7 +2258,7 @@ public class SxfBalloonShape : SxfShape
         /// <summary>ハッチパターン配置位置Y座標</summary>
         public double PatternY;
         /// <summary>ハッチパターンの繰り返しベクトル１の大きさ</summary>
-        public double PatternVector1;           /* ハッチパターンの繰り返しベクトル１の大きさ */
+        public double PatternVector1;
         /// <summary>ハッチパターンの繰り返しベクトル１の角度</summary>
         public double PatternVector1Angle;
         /// <summary>ハッチパターンの繰り返しベクトル２の大きさ</summary>
@@ -1992,6 +2276,23 @@ public class SxfBalloonShape : SxfShape
         /// <summary>中抜きの複合曲線のフィーチャコード</summary>
         public readonly List<int> InId = new();
 
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="layer">レイヤコード</param>
+        /// <param name="name">既定義シンボル名</param>
+        /// <param name="color">ハッチパターンの色コード</param>
+        /// <param name="patternX">ハッチパターン配置位置X座標</param>
+        /// <param name="patternY">ハッチパターン配置位置Y座標</param>
+        /// <param name="patternVector1">ハッチパターンの繰り返しベクトル１の大きさ</param>
+        /// <param name="patternVector1Angle">ハッチパターンの繰り返しベクトル１の角度</param>
+        /// <param name="patternVector2">ハッチパターンの繰り返しベクトル２の大きさ</param>
+        /// <param name="patternVector2Angle">ハッチパターンの繰り返しベクトル２の角度</param>
+        /// <param name="patternScaleX">ハッチパターンのX尺度</param>
+        /// <param name="patternScaleY">ハッチパターンのY尺度</param>
+        /// <param name="patternAngle">ハッチパターンの向きの角度</param>
+        /// <param name="outId">外形の複合曲線のフィーチャコード</param>
+        /// <param name="inId">中抜きの複合曲線のフィーチャコード</param>
         public SxfFillAreaStyleTilesShape(
             int layer, string name, int color, double patternX, double patternY, 
             double patternVector1, double patternVector1Angle, double patternVector2, double patternVector2Angle, 
@@ -2023,9 +2324,9 @@ public class SxfBalloonShape : SxfShape
         }
     }
 
-    //------------------------------------------------
-    //  複合曲線定義
-    //------------------------------------------------
+    /// <summary>
+    /// 複合曲線定義
+    /// </summary>
     public class SxfCcurveOrg
     {
         /// <summary>色コード </summary>
@@ -2034,9 +2335,21 @@ public class SxfBalloonShape : SxfShape
         public int LineType;
         /// <summary>線幅コード</summary>
         public int LineWidth;
-        /// <summary>表示/非表示フラグ</summary>
+        /// <summary>表示/非表示フラグ(0:非表示, 1:表示)</summary>
         public int Flag;
 
+        /// <summary>
+        /// 図形のリスト
+        /// </summary>
+        public List<SxfShape> Shapes { get; } = new();
+
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="color">色コード</param>
+        /// <param name="lineType">線種コード</param>
+        /// <param name="lineWidth">線幅コード</param>
+        /// <param name="flag">表示/非表示フラグ(0:非表示, 1:表示)</param>
         public SxfCcurveOrg(int color, int lineType, int lineWidth, int flag)
         {
             Color = color;
@@ -2044,36 +2357,12 @@ public class SxfBalloonShape : SxfShape
             LineWidth = lineWidth;
             Flag = flag;
         }
-    }
-
-    //------------------------------------------------
-    //  寸法線用Terminator Symbol
-    //------------------------------------------------
-    public class SxfTermSymbol
-    {
-        public int target_ID;          /* 矢印インスタンスＩＤ */
-        public int flag;               /* 矢印フラグ */
-        public int color;              /* 色コード */
-        public int code;               /* 矢印コード */
-        public double direction_x;     /* Ｘ方向ベクトル */
-        public double direction_y;     /* Ｙ方向ベクトル */
-        public double x;               /* 矢印配置点Ｘ座標 */
-        public double y;               /* 矢印配置点Ｙ座標 */
-        public double scale;           /* 矢印配置倍率 */
-    }
-
-    //------------------------------------------------
-    //  寸法線用Projection Line
-    //------------------------------------------------
-    public class SxfProjLine
-    {
-        public int target_ID;  /* 補助線インスタンスＩＤ */
-        public double ho_x0;   /* 補助線基点Ｘ座標 */
-        public double ho_y0;   /* 補助線基点Ｙ座標 */
-        public double ho_x1;   /* 補助線始点Ｘ座標 */
-        public double ho_y1;   /* 補助線始点Ｙ座標 */
-        public double ho_x2;   /* 補助線終点Ｘ座標 */
-        public double ho_y2;   /* 補助線終点Ｙ座標 */
+        /// <inheritdoc/>
+        public override string ToString()
+        {
+            return Helper.MakeFeatureString(
+                "composite_curve_org_feature", Color, LineType, LineWidth, Flag);
+        }
     }
 }
 

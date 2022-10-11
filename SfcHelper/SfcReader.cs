@@ -1,29 +1,31 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Runtime.CompilerServices;
+﻿using System.Diagnostics;
 using System.Text;
-using System.Threading.Tasks;
-using System.Xml.Linq;
+using System.Text.RegularExpressions;
 
 namespace SfcHelper
 {
+    /// <summary>
+    /// SFCファイル読み取りクラス
+    /// </summary>
     public class SfcReader
     {
-
-        public SfcHeader Header { get; set; } = new();
-        public SxfSheet Sheet { get; set; } = new("A3 Portrait", 3, 1, 420, 297);
-        public SfcTable Table { get; private set; } = new();
+        SxfDocument mDoc = null!;
         List<SxfShape> mShapeBuffer = new();
-        public List<SxfSfigOrg> SfigOrgList { get; } = new();
-        public SfcReader()
+        /// <summary>
+        /// コンストラクタ
+        /// </summary>
+        /// <param name="doc">ドキュメント</param>
+        public SfcReader(SxfDocument doc)
         {
+            mDoc = doc;
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         }
 
+        /// <summary>
+        /// SFCファイルかどうかのチェック。ファイルのヘッダから判別します。
+        /// </summary>
+        /// <param name="path">ファイルのパス</param>
+        /// <returns>SFCファイルであればtrue。</returns>
         public bool IsSfcFile(string path)
         {
             if (!File.Exists(path)) return false;
@@ -31,38 +33,35 @@ namespace SfcHelper
             return ReadHaeder(r);
         }
 
+        /// <summary>
+        /// ドキュメント読み込み
+        /// </summary>
+        /// <param name="path">ファイルのパス</param>
         public void Read(string path)
         {
-            Table = new();
+            mDoc.Clear();
             using var r = new StreamReader(path, Encoding.GetEncoding("shift_jis"));
             if (!ReadHaeder(r)) throw new Exception("Header error");
-            ReadFeature(r);
+            ReadDataSection(r);
         }
 
-        bool CheckStartOfDataSection(TextReader r)
+        /// <summary>
+        /// データセクション読み込み
+        /// </summary>
+        void ReadDataSection(TextReader r)
         {
-            var tokenizer = new Tokenizer(r);
-            while (true)
-            {
-                var tok = tokenizer.GetNextToken();
-                if (tok.Kind != Tokenizer.TokenKind.Identifier) return false;
-                if (tok.Value == "DATA")
-                {
-                    tok = tokenizer.GetNextToken();
-                    return tok.Kind == Tokenizer.TokenKind.Semicolon;
-                }
-                if (tok.IsEof) return false;
-            }
-        }
-        void ReadFeature(TextReader r)
-        {
+            //セクション開始チェック
             if (!CheckStartOfDataSection(r)) throw new Exception("Could not find DATA section");
+            //初期化
+            mShapeBuffer.Clear();
+            //mNextCompositCurveId = 1;
+            //読み込み開始
             var sb = new StringBuilder();
             while (true)
             {
                 var s = r.ReadLine();
                 if (s == null) return;
-                s.Trim();
+                s = s.Trim();
                 if (s == "/*SXF" || s == "/*SXF3" || s == "/*SXF3.1")
                 {
                     sb.Clear();
@@ -70,7 +69,7 @@ namespace SfcHelper
                     {
                         s = r.ReadLine();
                         if (s == null) throw new Exception("Unexpected eol in comment feature.");
-                        s.Trim();
+                        s = s.Trim();
                         if (s == "") continue;
                         if (s == "SXF*/" || s == "SXF3*/" || s == "SXF3.1*/")
                         {
@@ -81,10 +80,28 @@ namespace SfcHelper
                         sb.Append(s);
                     }
                 }
-                if (s.StartsWith("ENDSEC") && s.EndsWith(";")) return;
+                //セクション終了チェック。
+                if (Regex.Replace(s, @"[\s]+", "") == "ENDSEC;") return;
             }
         }
 
+        /// <summary>
+        /// HEADER セクションに続いてDATA;があるかのチェック。
+        /// </summary>
+        bool CheckStartOfDataSection(TextReader r)
+        {
+            while (true)
+            {
+                var s = r.ReadLine();
+                if (s == null) return false;
+                if (Regex.Replace(s, @"[\s]+", "") == "DATA;")  return true;
+            }
+        }
+
+
+        /// <summary>
+        /// Feature読み込み。書式は#100=feature_name(...)
+        /// </summary>
         void ReadCommentFeature(TextReader r)
         {
             var tokenizer = new Tokenizer(r);
@@ -110,25 +127,25 @@ namespace SfcHelper
                     ParseSfigOrgFeature(ps);
                     break;
                 case "layer_feature":
-                    Table.ParseLayerFeature(ps);
+                    mDoc.Table.ParseLayerFeature(ps);
                     break;
                 case "pre_defined_font_feature":
-                    Table.ParsePreDefinedLineTypeFeature(ps);
+                    mDoc.Table.ParsePreDefinedLineTypeFeature(ps);
                     break;
                 case "user_defined_font_feature":
-                    Table.ParseUserDefinedLineTypeFeature(ps);
+                    mDoc.Table.ParseUserDefinedLineTypeFeature(ps);
                     break;
                 case "pre_defined_colour_feature":
-                    Table.ParsePreDefinedColourFeature(ps);
+                    mDoc.Table.ParsePreDefinedColourFeature(ps);
                     break;
                 case "user_defined_colour_feature":
-                    Table.ParseUserDefinedColourFeature(ps);
+                    mDoc.Table.ParseUserDefinedColourFeature(ps);
                     break;
                 case "width_feature":
-                    Table.ParseWidthFeature(ps);
+                    mDoc.Table.ParseWidthFeature(ps);
                     break;
                 case "text_font_feature":
-                    Table.ParseTextFontFeature(ps);
+                    mDoc.Table.ParseTextFontFeature(ps);
                     break;
                 case "point_marker_feature":
                     ParsePointMarkerFeature(ps);
@@ -172,6 +189,9 @@ namespace SfcHelper
                 case "curve_dim_feature":
                     ParseCurveDimFeature(ps);
                     break;
+                case "angular_dim_feature":
+                    ParseAngularDimFeature(ps);
+                    break;
                 case "radius_dim_feature":
                     ParseRadiusDimFeature(ps);
                     break;
@@ -196,7 +216,9 @@ namespace SfcHelper
                 case "fill_area_style_tiles_feature":
                     ParseFillAreaStyleTilesFeature(ps);
                     break;
-
+                case "composite_curve_org_feature":
+                    ParseCompositeCurveOrgFeature(ps);
+                    break;
                 default:
                     Debug.WriteLine($"ReadCommentFeature:: unknown feature{tag}");
                     break;
@@ -211,8 +233,8 @@ namespace SfcHelper
             var orient = ParseInt(ps[2], "DrawingSheet.orient");
             var width = ParseInt(ps[3], "DrawingSheet.width");
             var height = ParseInt(ps[4], "DrawingSheet.height");
-            Sheet = new(name, t, orient, width, height);
-            Sheet.Shapes.AddRange(mShapeBuffer);
+            mDoc.SetSheetParameter(name, t, orient, width, height);
+            mDoc.Shapes.AddRange(mShapeBuffer);
             mShapeBuffer.Clear();
         }
 
@@ -222,9 +244,24 @@ namespace SfcHelper
             var name = ParseString(ps[0], "SfigOrg.name");
             var flag = ParseInt(ps[1], "SfigOrg.flag");
             var sfig = new SxfSfigOrg(name, flag);
-            SfigOrgList.Add(sfig);
+            sfig.Shapes.AddRange(mShapeBuffer);
+            mDoc.AddSfigOrg(sfig);
             mShapeBuffer.Clear();
         }
+
+        void ParseCompositeCurveOrgFeature(List<object> ps)
+        {
+            CheckParameterSize(ps, 4, "CompositeCurveOrg");
+            var color = ParseInt(ps[0], "CompositeCurveOrg.color");
+            var lineType = ParseInt(ps[1], "CompositeCurveOrg.lineType");
+            var lineWidth = ParseInt(ps[2], "CompositeCurveOrg.lineWidth");
+            var invisibility = ParseInt(ps[3], "CompositeCurveOrg.invisibility");
+            var s = new SxfCcurveOrg(color, lineType, lineWidth, invisibility);
+            s.Shapes.AddRange(mShapeBuffer);
+            mDoc.AddCompositCurve(s);
+            mShapeBuffer.Clear();
+        }
+
 
         void ParsePointMarkerFeature(List<object> ps)
         {
@@ -536,6 +573,63 @@ namespace SfcHelper
             mShapeBuffer.Add(s);
         }
 
+        void ParseAngularDimFeature(List<object> ps)
+        {
+            CheckParameterSize(ps, 45, "AngularDim");
+            var layer = ParseInt(ps[0], "AngularDim.layer");
+            var color = ParseInt(ps[1], "AngularDim.color");
+            var lineType = ParseInt(ps[2], "AngularDim.type");
+            var lineWidth = ParseInt(ps[3], "AngularDim.lineWidth");
+            var sunX = ParseDouble(ps[4], "AngularDim.sunX");
+            var sunY = ParseDouble(ps[5], "AngularDim.sunY");
+            var radius = ParseDouble(ps[6], "AngularDim.radius");
+            var angle0 = ParseDouble(ps[7], "AngularDim.angle0");
+            var angle1 = ParseDouble(ps[8], "AngularDim.angle1");
+            var flag2 = ParseInt(ps[9], "AngularDim.flag2");
+            var ho1X0 = ParseDouble(ps[10], "AngularDim.ho1X0");
+            var ho1Y0 = ParseDouble(ps[11], "AngularDim.ho1Y0");
+            var ho1X1 = ParseDouble(ps[12], "AngularDim.ho1X1");
+            var ho1Y1 = ParseDouble(ps[13], "AngularDim.ho1Y1");
+            var ho1X2 = ParseDouble(ps[14], "AngularDim.ho1X2");
+            var ho1Y2 = ParseDouble(ps[15], "AngularDim.ho1Y2");
+            var flag3 = ParseInt(ps[16], "AngularDim.flag3");
+            var ho2X0 = ParseDouble(ps[17], "AngularDim.ho2X0");
+            var ho2Y0 = ParseDouble(ps[18], "AngularDim.ho2Y0");
+            var ho2X1 = ParseDouble(ps[19], "AngularDim.ho2X1");
+            var ho2Y1 = ParseDouble(ps[20], "AngularDim.ho2Y1");
+            var ho2X2 = ParseDouble(ps[21], "AngularDim.ho2X2");
+            var ho2Y2 = ParseDouble(ps[22], "AngularDim.ho2Y2");
+            var arr1Code1 = ParseInt(ps[23], "AngularDim.arr1Code1");
+            var arr1Code2 = ParseInt(ps[24], "AngularDim.arr1Code2");
+            var arr1X = ParseDouble(ps[25], "AngularDim.arr1X");
+            var arr1Y = ParseDouble(ps[26], "AngularDim.arr1Y");
+            var arr1R = ParseDouble(ps[27], "AngularDim.arr1R");
+            var arr2Code1 = ParseInt(ps[28], "AngularDim.arr2Code1");
+            var arr2Code2 = ParseInt(ps[29], "AngularDim.arr2Code2");
+            var arr2X = ParseDouble(ps[30], "AngularDim.arr2X");
+            var arr2Y = ParseDouble(ps[31], "AngularDim.arr2Y");
+            var arr2R = ParseDouble(ps[32], "AngularDim.arr2R");
+            var flag4 = ParseInt(ps[33], "AngularDim.flag4");
+            var font = ParseInt(ps[34], "AngularDim.font");
+            var str = ParseString(ps[35], "AngularDim.str");
+            var textX = ParseDouble(ps[36], "AngularDim.textX");
+            var textY = ParseDouble(ps[37], "AngularDim.textY");
+            var height = ParseDouble(ps[38], "AngularDim.height");
+            var width = ParseDouble(ps[39], "AngularDim.width");
+            var spc = ParseDouble(ps[40], "AngularDim.spc");
+            var angle = ParseDouble(ps[41], "AngularDim.angle");
+            var slant = ParseDouble(ps[42], "AngularDim.slant");
+            var bpnt = ParseInt(ps[43], "AngularDim.brnt");
+            var direct = ParseInt(ps[44], "AngularDim.direct");
+            var s = new SxfAngularDimShape(
+                layer, color, lineType, lineWidth, sunX, sunY, radius, angle0,
+                angle1, flag2, ho1X0, ho1Y0, ho1X1, ho1Y1,
+                ho1X2, ho1Y2, flag3, ho2X0, ho2Y0, ho2X1, ho2Y1,
+                ho2X2, ho2Y2, arr1Code1, arr1Code2, arr1X, arr1Y, arr1R, arr2Code1, arr2Code2,
+                arr2X, arr2Y, arr2R, flag4, font, str, textX, textY,
+                height, width, spc, angle, slant, bpnt, direct);
+            mShapeBuffer.Add(s);
+        }
         void ParseRadiusDimFeature(List<object> ps)
         {
             CheckParameterSize(ps, 25, "RadiusDim");
@@ -691,7 +785,7 @@ namespace SfcHelper
 
         void ParseFillAreaStyleColorFeature(List<object> ps)
         {
-            CheckParameterSize(ps, 4, "FillAreaStyleColor");
+            CheckParameterSize(ps, 5, "FillAreaStyleColor");
             var layer = ParseInt(ps[0], "FillAreaStyleColor.layer");
             var color = ParseInt(ps[1], "FillAreaStyleColor.color");
             var outId = ParseInt(ps[2], "FillAreaStyleColor.outId");
@@ -743,7 +837,7 @@ namespace SfcHelper
         }
 
 
-        public bool ReadHaeder(TextReader r)
+        bool ReadHaeder(TextReader r)
         {
             //最初に"ISO-10303-21;"があればSXF
             while (true)
@@ -789,7 +883,7 @@ namespace SfcHelper
                             if (sp[0] != "SCADEC") return false;
                             if (!sp[1].StartsWith("level")) return false;
                             if (!int.TryParse(sp[1].Substring(5), out int level)) return false;
-                            Header.Level = level;
+                            mDoc.Header.Level = level;
                             //only support sfc, "feature_mode"
                             if (sp[2] != "feature_mode") return false;
                         }
@@ -798,19 +892,19 @@ namespace SfcHelper
                         {
                             if (ps.Count < 7) return false;
                             if (ps[0] is not string s0) return false;
-                            Header.FileName = s0;
+                            mDoc.Header.FileName = s0;
                             if (ps[1] is not string s1) return false;
-                            Header.TimeStamp = s1;
+                            mDoc.Header.TimeStamp = s1;
                             var s2 = GetSingleStringFromList(ps[2]);
                             if (s2 == null) return false;
-                            Header.Author = s2;
+                            mDoc.Header.Author = s2;
                             var s3 = GetSingleStringFromList(ps[3]);
                             if (s3 == null) return false;
-                            Header.Organization = s3;
+                            mDoc.Header.Organization = s3;
                             if (ps[4] is not string s4) return false;
-                            Header.PreprocessorVersion = s4;
+                            mDoc.Header.PreprocessorVersion = s4;
                             if (ps[5] is not string s5) return false;
-                            Header.TranslatorName = s5;
+                            mDoc.Header.TranslatorName = s5;
                         }
                         break;
                     case "ENDSEC":
@@ -877,7 +971,6 @@ namespace SfcHelper
         {
             if (vx.Count != size || vy.Count != size) throw new Exception($"{name} vertex size is invalid.(vx={vx.Count} vy={vy.Count} n={size})");
         }
-
 
         List<object> GetParams(Tokenizer tokenizer)
         {
@@ -968,6 +1061,7 @@ namespace SfcHelper
             }
             return ret;
         }
+
         internal static List<int> ParseIntList(object obj, string name)
         {
             var src = SfcReader.ParseString(obj, name);
@@ -976,14 +1070,19 @@ namespace SfcHelper
             if (s[0] != '(') throw new Exception($"{name} list is not start with '('");
             if (s[^1] != ')') throw new Exception($"{name} list is not end with '('");
             s = s[1..^1];
-            var sa = s.Split(",");
-            foreach (var a in sa)
+            s = s.Trim();
+            if(s != "")
             {
-                if (!int.TryParse(a, out var d)) throw new Exception($"{name} list item is not int.({a})");
-                ret.Add(d);
+                var sa = s.Split(",");
+                foreach (var a in sa)
+                {
+                    if (!int.TryParse(a, out var d)) throw new Exception($"{name} list item is not int.({a})");
+                    ret.Add(d);
+                }
             }
             return ret;
         }
+
         internal static HatchingPattern ParseHatchingPattern(object obj)
         {
             var src = SfcReader.ParseString(obj, "HatchingPattern");
@@ -1002,6 +1101,5 @@ namespace SfcHelper
             if (!double.TryParse(sa[6], out var angle)) throw new Exception($"HatchingPattern item is not double.({sa[6]})");
             return new HatchingPattern(color, lineType, lineWidth, startX, startY, spacing, angle);
         }
-
     }
 }

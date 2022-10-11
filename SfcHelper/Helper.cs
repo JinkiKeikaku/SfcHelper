@@ -14,6 +14,26 @@ namespace SfcHelper
             return Math.Abs(x - y) <= delta;
         }
 
+        public static double DegToRad(double deg)
+        {
+            return (Math.PI * deg / 180.0);
+        }
+
+        public static (double X, double Y) RotatePoint(double x, double y, double rad)
+        {
+            if (FloatEQ(rad, 0.0)) return(x,y);
+            var c = Math.Cos(rad);
+            var s = Math.Sin(rad);
+            var xx = x * c - y * s;
+            var yy = x * s + y * c;
+            return(xx, yy);
+        }
+
+        public static (double X, double Y) ScalePoint(double x, double y, double ratioX, double ratioY)
+        {
+            return (x * ratioX, y * ratioY);
+        }
+
         public static string MakeFeatureString(string featureName, params object[] list)
         {
             var sa = new List<string>();

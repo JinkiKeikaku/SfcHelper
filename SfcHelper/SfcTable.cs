@@ -1,55 +1,192 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
 using System.Linq;
+using System.Reflection.Emit;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace SfcHelper
 {
+    /// <summary>
+    /// テーブル
+    /// </summary>
     public class SfcTable
     {
-        Dictionary<int, SxfLayer> LayerMap { get; } = new();
-        int mNextLayerId = 1;
+        private int mNextLayerId = 1;
+        private int mNextUserLineWidthId = 11;
+        private int mNextUserColorId = 17;
+        private int mNextUserLineTypeId = 17;
+        private int mNextTextFontId = 1;
 
-        Dictionary<int, SxfLineWidth> LineWidthMap { get; } = new();
-        int mNextUserLineWidthId = 11;
-        double[] mPreDefinedLineWidth = new double[]
+        /// <summary>
+        /// レイヤテーブル
+        /// </summary>
+        public Dictionary<int, SxfLayer> LayerMap { get; } = new();
+        /// <summary>
+        /// 線幅テーブル
+        /// </summary>
+        public Dictionary<int, SxfLineWidth> LineWidthMap { get; } = new();
+        /// <summary>
+        /// 色テーブル
+        /// </summary>
+        public Dictionary<int, SxfColor> ColorMap { get; } = new();
+        /// <summary>
+        /// 線種テーブル
+        /// </summary>
+        public Dictionary<int, SxfLineType> LineTypeMap { get; } = new();
+        /// <summary>
+        /// フォントテーブル
+        /// </summary>
+        public Dictionary<int, SxfTextFont> TextFontMap { get; } = new();
+        /// <summary>
+        /// 既定義線幅テーブル
+        /// </summary>
+        public double[] PreDefinedLineWidth = new double[]
         {
             0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0
         };
 
-        Dictionary<int, SxfColor> mColorMap { get; } = new();
-        int mNextUserColorId = 17;
-        SxfPreDefinedColor[] mPreDefColors = new SxfPreDefinedColor[]
+        /// <summary>
+        /// SXFの色コードから実際の色を返します。
+        /// 色コードから色が取得できない場合、nullが返ります。
+        /// </summary>
+        /// <param name="colorId">色コード</param>
+        /// <returns>RGBの色</returns>
+        public SxfColor? GetColorFromId(int colorId)
         {
-            new("black", 0,0,0),new("red", 255,0,0),new("green", 0,255,0),new("blue", 0,0,255),
-            new("yellow", 255,255,0),new("magenta", 255,0,255),new("cyan", 0,255,255),new("white", 255,255,255),
-            new("deeppink", 192,0,128),new("brown", 192,128,64),new("orange", 255,128,0),new("lightgreen", 128,192,128),
-            new("lightblue", 0,128,255),new("lavender", 128,64,255),new("lightgray", 192,192,192),new("darkgray", 128,128,128),
-        };
+            var c = new SxfColor(0,0,0);
+            if (ColorMap.TryGetValue(colorId, out var sxfColor))
+            {
+                return sxfColor;
+            }
+            return null;
+        }
 
-        Dictionary<int, SxfLineType> mLineTypeMap { get; } = new();
-        int mNextUserLineTypeId = 17;
-        SxfPreDefinedLineType[] mPreDefLineTypes = new SxfPreDefinedLineType[]
+        /// <summary>
+        /// 既定義線色を設定します。保存処理の時に使います。
+        /// </summary>
+        public void SetAllPreDefinedColors()
         {
-            new SxfPreDefinedLineType("continuous", new double[]{ }),//1
-            new SxfPreDefinedLineType("dashed", new double[]{6, 1.5}),//2
-            new SxfPreDefinedLineType("dashed spaced", new double[]{6, 6}),//3
-            new SxfPreDefinedLineType("long dashed dotted", new double[]{12, 1.5, 0.25, 1.5}),//4
-            new SxfPreDefinedLineType("long dashed double-dotted", new double[]{12,1.5,0.25,1.5,0.25,1.5}),//5
-            new SxfPreDefinedLineType("long dashed triplicate-dotted", new double[]{12,3,0.25,1.5,0.25,1.5,0.25,1.5}),//6
-            new SxfPreDefinedLineType("dotted", new double[]{0.25, 1.5}),//7
-            new SxfPreDefinedLineType("chain", new double[]{12,1.5,3.5,1.5}),//8
-            new SxfPreDefinedLineType("chain double dash", new double[]{12,1.5,3.5,1.5,3.5,1.5}),//9
-            new SxfPreDefinedLineType("dashed dotted", new double[]{6,1.5,0.25,1.5}),//10
-            new SxfPreDefinedLineType("double-dashed dotted", new double[]{6,1.5,6,1.5,0.25,1.5}),//11
-            new SxfPreDefinedLineType("dashed double-dotted", new double[]{6,1.5,0.25,1.5,0.25,1.5}),//12
-            new SxfPreDefinedLineType("double-dashed double-dotted", new double[]{6,1.5,6,1.5,0.25,1.5,0.25,1.5}),//13
-            new SxfPreDefinedLineType("dashed triplicate-dotted", new double[]{6,1.5,0.25,1.5,0.25,1.5,0.25,1.5}),//14
-            new SxfPreDefinedLineType("double-dashed triplicate-dotted", new double[]{6,1.5,6,1.5,0.25,1.5,0.25,1.5,0.25,1.5}),//15
-        };
-        Dictionary<int, SxfTextFont> mTextFontMap { get; } = new();
-        int mNextTextFontId = 1;
+            for (var i = 0; i < SxfPreDefinedColor.PreDefColors.Length; i++)
+            {
+                ColorMap[i + 1] = SxfPreDefinedColor.PreDefColors[i];
+            }
+        }
+
+        /// <summary>
+        /// 既定義線幅を設定します。保存処理の時に使います。
+        /// </summary>
+        public void SetAllPreDefinedLineWidths()
+        {
+            for (var i = 0; i < SxfLineWidth.PreDefinedLineWidth.Length; i++)
+            {
+                LineWidthMap[i + 1] = new SxfLineWidth(SxfLineWidth.PreDefinedLineWidth[i]);
+            }
+        }
+
+        /// <summary>
+        /// 既定義線種を設定します。保存処理の時に使います。
+        /// </summary>
+        public void SetAllPreDefinedLineTypes()
+        {
+            for (var i = 0; i < SxfPreDefinedLineType.PreDefLineTypes.Length; i++)
+            {
+                LineTypeMap[i + 1] = SxfPreDefinedLineType.PreDefLineTypes[i];
+            }
+        }
+
+
+        /// <summary>
+        /// 線幅コードから線幅を返します。
+        /// 線幅コードから線幅が取得できない場合、nullが返ります。
+        /// </summary>
+        /// <param name="widthId">線幅コード</param>
+        /// <returns>線幅</returns>
+        public SxfLineWidth? GetLineWidthFromId(int widthId)
+        {
+            if (LineWidthMap.TryGetValue(widthId, out var sxfLineWidth))
+            {
+                return sxfLineWidth;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 線種コードから線種を返します。
+        /// みつからない場合、nullを返します。
+        /// </summary>
+        /// <param name="typeId">線種コード</param>
+        /// <returns>線種</returns>
+        public SxfLineType? GetLineTypeFromId(int typeId)
+        {
+            if (LineTypeMap.TryGetValue(typeId, out var sxfLineType))
+            {
+                return sxfLineType;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// テーブルにフォントを追加しコードを返します。
+        /// フォントが定義できる数を超えた場合は例外が発生します。
+        /// </summary>
+        /// <param name="name">フォント名</param>
+        /// <returns>フォントコード</returns>
+        /// <exception cref="Exception">フォントが定義できる数を超えた場合に発生します。</exception>
+        public int AddTextFont(string name)
+        {
+            var i = mNextTextFontId;
+            if (mNextTextFontId > SxfConst.MaxTextFont) throw new Exception($"Number of fonts >{SxfConst.MaxTextFont} ");
+            TextFontMap[mNextTextFontId++] = new SxfTextFont(name);
+            return i;
+        }
+
+        /// <summary>
+        /// フォントコードからフォントを取得します。
+        /// みつからない場合、nullを返します。
+        /// </summary>
+        /// <param name="id">フォントコード</param>
+        /// <returns>フォント</returns>
+        public SxfTextFont? GetTextFontFromId(int id)
+        {
+            if (TextFontMap.TryGetValue(id, out var sxfTextFont))
+            {
+                return sxfTextFont;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// テーブルにレイヤを追加しレイヤコードを返します。
+        /// レイヤが最大数に達して追加できない場合は例が発生します。
+        /// </summary>
+        /// <param name="layer">レイヤ</param>
+        /// <returns>レイヤコード</returns>
+        /// <exception cref="Exception">レイヤが定義できる数を超えた場合に発生します。</exception>
+        public int AddLayer(SxfLayer layer)
+        {
+            var i = mNextLayerId;
+            if (mNextLayerId > SxfConst.MaxLayer) throw new Exception($"Number of layers >{SxfConst.MaxLayer} ");
+            LayerMap[mNextLayerId++] = layer;
+            return i;
+        }
+
+        /// <summary>
+        /// レイヤコードからレイヤを返します。
+        /// みつからなければnullを返します。
+        /// </summary>
+        /// <param name="id">レイヤコード</param>
+        /// <returns>レイヤ</returns>
+        public SxfLayer? GetLayerFromId(int id)
+        {
+            if (LayerMap.TryGetValue(id, out var SxfLayer))
+            {
+                return SxfLayer;
+            }
+            return null;
+        }
 
 
         internal void ParseLayerFeature(List<object> ps)
@@ -69,9 +206,9 @@ namespace SfcHelper
         {
             if (ps.Count < 1) throw new Exception($"PreDefinedLineType parameter size error.({ps.Count}< 1)");
             var name = SfcReader.ParseString(ps[0], "PreDefinedLineType.name");
-            var i = Array.FindIndex(mPreDefLineTypes, x => x.Name == name);
+            var i = Array.FindIndex(SxfPreDefinedLineType.PreDefLineTypes, x => x.Name == name);
             if (i < 0) throw new Exception($"PreDefinedLineType parameter error.({name})");
-            mLineTypeMap.Add(i + 1, mPreDefLineTypes[i]);
+            LineTypeMap.Add(i + 1, SxfPreDefinedLineType.PreDefLineTypes[i]);
         }
 
         internal void ParseUserDefinedLineTypeFeature(List<object> ps)
@@ -86,16 +223,16 @@ namespace SfcHelper
                 throw new Exception($"Line type exceeds the maximum number of definitions.");
             }
 
-            mLineTypeMap.Add(mNextUserLineTypeId++, new SxfLineType(name, a2.ToArray()));
+            LineTypeMap.Add(mNextUserLineTypeId++, new SxfLineType(name, a2.ToArray()));
         }
 
         internal void ParsePreDefinedColourFeature(List<object> ps)
         {
             if (ps.Count < 1) throw new Exception($"PreDefinedColour parameter size error.({ps.Count}< 1)");
             var name = SfcReader.ParseString(ps[0], "PreDefinedColour.name");
-            var i = Array.FindIndex(mPreDefColors, x => x.Name == name);
+            var i = Array.FindIndex(SxfPreDefinedColor.PreDefColors, x => x.Name == name);
             if (i < 0) throw new Exception($"PreDefinedColour parameter error.({name})");
-            mColorMap.Add(i + 1, mPreDefColors[i]);
+            ColorMap.Add(i + 1, SxfPreDefinedColor.PreDefColors[i]);
         }
 
         internal void ParseUserDefinedColourFeature(List<object> ps)
@@ -108,7 +245,7 @@ namespace SfcHelper
             {
                 throw new Exception($"UserDefinedColour exceeds the maximum number of definitions.");
             }
-            mColorMap.Add(mNextUserColorId++, new SxfColor(r, g, b));
+            ColorMap.Add(mNextUserColorId++, new SxfColor(r, g, b));
         }
 
         internal void ParseWidthFeature(List<object> ps)
@@ -116,10 +253,10 @@ namespace SfcHelper
             if (ps.Count < 1) throw new Exception($"Width parameter size error.({ps.Count}< 1)");
             var w = SfcReader.ParseDouble(ps[0], "Width");
             if (w <= 0.0) throw new Exception($"Width parameter <= 0.0.({w})");
-            var i = Array.FindIndex(mPreDefinedLineWidth, x => Helper.FloatEQ(x, w));
+            var i = Array.FindIndex(PreDefinedLineWidth, x => Helper.FloatEQ(x, w));
             if (i >= 0)
             {
-                LineWidthMap.Add(i + 1, new SxfLineWidth(mPreDefinedLineWidth[i]));
+                LineWidthMap.Add(i + 1, new SxfLineWidth(PreDefinedLineWidth[i]));
             }
             else
             {
@@ -140,10 +277,7 @@ namespace SfcHelper
                 throw new Exception($"TextFont exceeds the maximum number of definitions.");
             }
 
-            mTextFontMap.Add(mNextTextFontId++, new SxfTextFont(name));
+            TextFontMap.Add(mNextTextFontId++, new SxfTextFont(name));
         }
-
-
-
     }
 }
